@@ -906,7 +906,7 @@ def render_full_report_page():
 default_quad_file = Path("plotgraph_quadrant_infographic.xlsx")
 default_heatmap_file = Path("HSCS2568_interac.xlsx")
 
-st.sidebar.title("HSCS Web Service")
+st.sidebar.title("MFU-MCH-HSCS 2025")
 
 uploaded_quad = st.sidebar.file_uploader(
     "อัปโหลดไฟล์ Quadrant Excel",
