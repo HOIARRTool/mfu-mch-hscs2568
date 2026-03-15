@@ -1,4 +1,3 @@
-
 import re
 import textwrap
 from pathlib import Path
@@ -30,6 +29,15 @@ H_RED_BG = "#FF2B2B"       # แดงสด
 H_ORANGE_BG = "#EF6C00"
 H_YELLOW_BG = "#F3E58A"
 H_GREEN_BG = "#2E7D32"
+
+# Default files / sheets
+DEFAULT_QUAD_FILE = Path("plotgraph_quadrant_infographic.xlsx")
+DEFAULT_HEATMAP_FILE = Path("HSCS2568_interac.xlsx")
+DEFAULT_QUAD_SHEET = "HSCS2568 (2)"
+DEFAULT_HEATMAP_SHEET = "HSCS2568"
+
+REPORT_URL = "https://sites.google.com/view/mch-hscs67-68/%E0%B8%A0%E0%B8%B2%E0%B8%9E%E0%B8%A3%E0%B8%A7%E0%B8%A1?authuser=0"
+REPORT_PREVIEW_IMAGE = Path("hscs_report_preview.png")
 
 
 def classify_score_quadrant(score: float) -> tuple[str, str]:
@@ -97,8 +105,6 @@ def dedupe_labels(labels):
     return out
 
 
-
-
 def wrap_tick_label(label: str, width: int = 18) -> str:
     """
     ทำ wrap text สำหรับชื่อหน่วยงานบนแกน X
@@ -133,8 +139,6 @@ def get_plotly_config_for_heatmap(unit_count: int) -> dict:
     return cfg
 
 
-
-
 def get_heatmap_display_mode(unit_count: int) -> dict:
     """
     กลุ่มที่มีหน่วยงานน้อยกว่า 3 คอลัมน์ ไม่ควรยืดเต็มจอ
@@ -145,11 +149,12 @@ def get_heatmap_display_mode(unit_count: int) -> dict:
         return {"compact": True, "width": 920}
     return {"compact": False, "width": None}
 
+
 # =========================================================
 # Quadrant page
 # =========================================================
 @st.cache_data(show_spinner=False)
-def load_quadrant_excel(file_obj, sheet_name: str = "HSCS2568 (2)") -> pd.DataFrame:
+def load_quadrant_excel(file_obj, sheet_name: str = DEFAULT_QUAD_SHEET) -> pd.DataFrame:
     raw = pd.read_excel(file_obj, sheet_name=sheet_name, header=None)
 
     records = []
@@ -462,7 +467,7 @@ def _resolve_header_value(ws, merge_map, row_num, col_num):
 
 
 @st.cache_data(show_spinner=False)
-def load_heatmap_excel(file_obj, sheet_name: str = "HSCS2568") -> tuple[pd.DataFrame, list[str]]:
+def load_heatmap_excel(file_obj, sheet_name: str = DEFAULT_HEATMAP_SHEET) -> tuple[pd.DataFrame, list[str]]:
     """
     อ่านไฟล์ heatmap โดยใช้ merged cells จริงของ Excel
     เพื่อป้องกันการ forward-fill ผิดคอลัมน์ เช่นคอลัมน์ 'ภาพรวม'
@@ -769,10 +774,9 @@ def render_heatmap_page(heatmap_source, heatmap_sheet: str, selected_page: str):
         st.warning("ไม่มีข้อมูลหลังจากกรอง")
         return
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     c1.metric("จำนวนมิติย่อย", f"{filtered[['sub_code','sub_name']].drop_duplicates().shape[0]:,}")
     c2.metric("จำนวนหน่วยงาน", f"{filtered['unit'].nunique():,}")
-    c3.metric("จำนวน cell ที่มีคะแนน", f"{filtered['score'].notna().sum():,}")
 
     fig = build_heatmap_figure(filtered, title_text="")
     display_mode = get_heatmap_display_mode(filtered["unit"].nunique())
@@ -859,12 +863,6 @@ def render_quadrant_page(quad_source, quad_sheet: str):
     )
 
 
-
-
-REPORT_URL = "https://sites.google.com/view/mch-hscs67-68/%E0%B8%A0%E0%B8%B2%E0%B8%9E%E0%B8%A3%E0%B8%A7%E0%B8%A1?authuser=0"
-REPORT_PREVIEW_IMAGE = Path("hscs_report_preview.png")
-
-
 def render_full_report_page():
     st.title("📘 รายงาน HSCS ฉบับสมบูรณ์")
     st.markdown("Preview card ของ Google Sites พร้อมปุ่มเปิดรายงานฉบับเต็ม")
@@ -903,37 +901,16 @@ def render_full_report_page():
 # =========================================================
 # App shell
 # =========================================================
-default_quad_file = Path("plotgraph_quadrant_infographic.xlsx")
-default_heatmap_file = Path("HSCS2568_interac.xlsx")
-
 st.sidebar.title("MFU-MCH-HSCS 2025")
 
-uploaded_quad = st.sidebar.file_uploader(
-    "อัปโหลดไฟล์ Quadrant Excel",
-    type=["xlsx"],
-    key="quad_uploader"
-)
-quad_sheet = st.sidebar.text_input("ชื่อชีต Quadrant", value="HSCS2568 (2)")
-
-uploaded_heatmap = st.sidebar.file_uploader(
-    "อัปโหลดไฟล์ Heatmap Excel",
-    type=["xlsx"],
-    key="heatmap_uploader"
-)
-heatmap_sheet = st.sidebar.text_input("ชื่อชีต Heatmap", value="HSCS2568")
-
-quad_source = uploaded_quad if uploaded_quad is not None else (default_quad_file if default_quad_file.exists() else None)
-heatmap_source = uploaded_heatmap if uploaded_heatmap is not None else (default_heatmap_file if default_heatmap_file.exists() else None)
+quad_source = DEFAULT_QUAD_FILE if DEFAULT_QUAD_FILE.exists() else None
+heatmap_source = DEFAULT_HEATMAP_FILE if DEFAULT_HEATMAP_FILE.exists() else None
 
 heatmap_pages = ["Heatmap: ภาพรวมทุกกลุ่ม"]
 if heatmap_source is not None:
     try:
-        if hasattr(heatmap_source, "seek"):
-            heatmap_source.seek(0)
-        _, group_names = load_heatmap_excel(heatmap_source, sheet_name=heatmap_sheet)
+        _, group_names = load_heatmap_excel(heatmap_source, sheet_name=DEFAULT_HEATMAP_SHEET)
         heatmap_pages += [f"Heatmap: {g}" for g in group_names]
-        if hasattr(heatmap_source, "seek"):
-            heatmap_source.seek(0)
     except Exception:
         pass
 
@@ -949,24 +926,22 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(
     """
 **เกณฑ์สีที่ใช้ร่วมกัน**
-- 🔴 แดง: คะแนน < 60
-- 🟠 ส้ม: คะแนน 60–70
-- 🟡 เหลือง: คะแนน 70.1–80
-- 🟢 เขียว: คะแนน > 80
+- 🔴 แดง: % Positve Score < 60 = ควรพัฒนาด่วน
+- 🟠 ส้ม: % Positve Score 60–70 = เร่งพัฒนา
+- 🟡 เหลือง: % Positve Score 70.1–80 = ควรพัฒนาต่อเนื่อง
+- 🟢 เขียว: % Positve Score > 80 = ควรส่งเสริม
 """
 )
 
 if page == "Quadrant 4 Quadrants":
     if quad_source is None:
-        st.warning("กรุณาอัปโหลดไฟล์ Quadrant Excel ก่อน")
+        st.warning("ไม่พบไฟล์ Quadrant Excel (`plotgraph_quadrant_infographic.xlsx`) ในโฟลเดอร์โปรเจกต์")
         st.stop()
-    render_quadrant_page(quad_source, quad_sheet)
+    render_quadrant_page(quad_source, DEFAULT_QUAD_SHEET)
 elif page == "รายงาน HSCS ฉบับสมบูรณ์":
     render_full_report_page()
 else:
     if heatmap_source is None:
-        st.warning("กรุณาอัปโหลดไฟล์ Heatmap Excel ก่อน")
+        st.warning("ไม่พบไฟล์ Heatmap Excel (`HSCS2568_interac.xlsx`) ในโฟลเดอร์โปรเจกต์")
         st.stop()
-    if hasattr(heatmap_source, "seek"):
-        heatmap_source.seek(0)
-    render_heatmap_page(heatmap_source, heatmap_sheet, page)
+    render_heatmap_page(heatmap_source, DEFAULT_HEATMAP_SHEET, page)
