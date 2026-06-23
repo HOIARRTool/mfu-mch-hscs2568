@@ -682,20 +682,17 @@ def render_overview_dashboard_page(quad_source, quad_sheet: str):
                 f'<span>{code}</span><strong>{score:.1f}%</strong></div>'
             )
 
+        # Keep each tile as compact one-line HTML. Leading indentation/newlines inside
+        # st.markdown can be interpreted as a Markdown code block and displayed as raw HTML.
+        sub_items_html = "".join(sub_items)
         tile_html_parts.append(
-            f"""
-            <div class="hscs-dim-tile" style="background:{bg}; color:{fg};" title="{dim_safe}">
-                <div class="hscs-dim-title">{dim_safe}</div>
-                <div>
-                    <div class="hscs-dim-score">{dim_avg:.1f}%</div>
-                    <div class="hscs-dim-status">{html.escape(status)}</div>
-                </div>
-                <div>
-                    <div class="hscs-sub-divider"></div>
-                    <div class="hscs-subgrid">{''.join(sub_items)}</div>
-                </div>
-            </div>
-            """
+            f'<div class="hscs-dim-tile" style="background:{bg}; color:{fg};" title="{dim_safe}">'
+            f'<div class="hscs-dim-title">{dim_safe}</div>'
+            f'<div><div class="hscs-dim-score">{dim_avg:.1f}%</div>'
+            f'<div class="hscs-dim-status">{html.escape(status)}</div></div>'
+            f'<div><div class="hscs-sub-divider"></div>'
+            f'<div class="hscs-subgrid">{sub_items_html}</div></div>'
+            f'</div>'
         )
 
     st.markdown(
