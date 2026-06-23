@@ -723,7 +723,7 @@ def style_heatmap_table(df: pd.DataFrame):
     return (
         df.style
         .format(lambda v: "" if pd.isna(v) else f"{v:.1f}")
-        .applymap(style_cell)
+        .map(style_cell)
     )
 
 
