@@ -79,7 +79,12 @@ def heatmap_font_color(score) -> str:
         return "#111111"
     return "#FFFFFF"
 
-
+def fix_dimension_labels(df):
+    if "dimension" in df.columns:
+        df["dimension"] = df["dimension"].replace({
+            "1. งานทำงานเป็นทีม": "1. การทำงานเป็นทีม"
+        })
+    return df
 def get_dimension_colors() -> dict:
     return {
         "1. การทำงานเป็นทีม": "#4472C4",
@@ -1020,6 +1025,8 @@ def build_heatmap_figure(long_df: pd.DataFrame, title_text: str = "") -> go.Figu
     fig.update_yaxes(title_text="", autorange="reversed", showgrid=False, tickfont=dict(size=10), automargin=True)
     return fig
 
+heatmap_df = load_heatmap_excel(...)
+heatmap_df = fix_dimension_labels(heatmap_df)
 
 def style_heatmap_table(df: pd.DataFrame):
     def style_cell(val):
