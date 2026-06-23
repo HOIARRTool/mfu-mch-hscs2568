@@ -1,5 +1,6 @@
 import re
 import textwrap
+import html
 from pathlib import Path
 
 import numpy as np
@@ -456,6 +457,288 @@ def quadrant_summary(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+
+
+# =========================================================
+# Dashboard overview page
+# =========================================================
+def _score_status(score: float) -> tuple[str, str, str]:
+    """Return status label, background color, and text color for a score."""
+    if pd.isna(score):
+        return "ไม่มีข้อมูล", "#F8FAFC", "#0F172A"
+    status, _ = classify_score_quadrant(float(score))
+    bg = heatmap_bg_color(score)
+    fg = heatmap_font_color(score)
+    return status, bg, fg
+
+
+def _dimension_sort_key(dim_name: str):
+    """Sort dimensions by leading number when available, otherwise by text."""
+    m = re.match(r"^\s*(\d+)", str(dim_name))
+    if m:
+        return (0, int(m.group(1)), str(dim_name))
+    return (1, 999, str(dim_name))
+
+
+def _sub_code_sort_key(code: str):
+    """Sort sub codes such as A1, A10, B2 naturally."""
+    s = str(code or "")
+    m = re.match(r"^([A-Za-z]+)(\d+)$", s)
+    if m:
+        return (m.group(1), int(m.group(2)))
+    return (s, 0)
+
+
+def _render_dashboard_css():
+    st.markdown(
+        """
+        <style>
+        .hscs-hero {
+            background: linear-gradient(135deg, #ffffff 0%, #f4f8ff 100%);
+            border: 1px solid #dbe5f0;
+            border-radius: 22px;
+            padding: 22px 24px;
+            margin-bottom: 18px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
+        }
+        .hscs-hero h1 {
+            color: #173B71;
+            margin: 0 0 4px 0;
+            font-size: 2.0rem;
+            line-height: 1.15;
+        }
+        .hscs-hero p {
+            color: #64748B;
+            margin: 0;
+            font-size: 1.0rem;
+        }
+        .hscs-section-title {
+            color: #173B71;
+            font-weight: 800;
+            font-size: 1.35rem;
+            margin: 18px 0 10px 0;
+            border-left: 5px solid #D7A928;
+            padding-left: 12px;
+        }
+        .hscs-dim-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 3px;
+            background: #CBD5E1;
+            border: 1px solid #CBD5E1;
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.055);
+            margin-bottom: 16px;
+        }
+        .hscs-dim-tile {
+            min-height: 176px;
+            padding: 13px 14px 12px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .hscs-dim-title {
+            font-weight: 800;
+            font-size: 0.88rem;
+            line-height: 1.28;
+            min-height: 43px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .hscs-dim-score {
+            text-align: center;
+            font-weight: 900;
+            font-size: 1.95rem;
+            line-height: 1.05;
+            margin: 4px 0 2px 0;
+        }
+        .hscs-dim-status {
+            text-align: center;
+            font-weight: 700;
+            font-size: 0.76rem;
+            opacity: 0.92;
+            margin-bottom: 5px;
+        }
+        .hscs-sub-divider {
+            height: 1px;
+            background: currentColor;
+            opacity: 0.42;
+            margin: 4px 0 7px 0;
+        }
+        .hscs-subgrid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px 4px;
+            justify-content: center;
+        }
+        .hscs-subitem {
+            min-width: 31%;
+            padding: 2px 3px 3px 3px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.12);
+            text-align: center;
+            line-height: 1.08;
+        }
+        .hscs-subitem span {
+            display: block;
+            font-weight: 900;
+            font-size: 0.70rem;
+            text-transform: uppercase;
+        }
+        .hscs-subitem strong {
+            display: block;
+            font-weight: 800;
+            font-size: 0.70rem;
+        }
+        .hscs-legend-inline {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin: 10px 0 18px 0;
+            color: #334155;
+            font-size: 0.84rem;
+            font-weight: 700;
+        }
+        .hscs-legend-dot {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            margin-right: 5px;
+            vertical-align: -2px;
+        }
+        @media (max-width: 1400px) {
+            .hscs-dim-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+        }
+        @media (max-width: 900px) {
+            .hscs-dim-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+            .hscs-dim-tile { min-height: 150px; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_overview_dashboard_page(quad_source, quad_sheet: str):
+    """Executive dashboard using the Quadrant Excel as the source of dimension/sub-item scores."""
+    _render_dashboard_css()
+
+    df = load_quadrant_excel(quad_source, sheet_name=quad_sheet)
+    df = apply_quadrant_logic(df)
+
+    overall_score = float(df["sub_score"].mean()) if not df.empty else np.nan
+    overall_status, overall_bg, overall_fg = _score_status(overall_score)
+    urgent_count = int((df["sub_score"] < 60).sum())
+    orange_count = int(((df["sub_score"] >= 60) & (df["sub_score"] <= 70)).sum())
+    dim_count = int(df["dimension"].nunique())
+    sub_count = int(df[["sub_code", "sub_name"]].drop_duplicates().shape[0])
+
+    st.markdown(
+        """
+        <div class="hscs-hero">
+            <h1>MFU-MCH HSCS Dashboard 2025</h1>
+            <p>Hospital Safety Culture Survey: executive overview + drill-down Color-coded Matrix</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Overall Positive Score", f"{overall_score:.1f}%", overall_status)
+    m2.metric("จำนวนมิติหลัก", f"{dim_count:,}")
+    m3.metric("จำนวนมิติย่อย", f"{sub_count:,}")
+    m4.metric("ข้อควรพัฒนาด่วน", f"{urgent_count:,}", f"เร่งพัฒนา {orange_count:,} ข้อ")
+
+    st.markdown('<div class="hscs-section-title">ร้อยละคำตอบเชิงบวก (% Positive Response) จำแนกตามมิติ</div>', unsafe_allow_html=True)
+
+    dim_avg_order = (
+        df[["dimension", "dimension_avg"]]
+        .drop_duplicates()
+        .sort_values("dimension", key=lambda s: s.map(_dimension_sort_key))
+    )
+
+    tile_html_parts = []
+    for _, dim_row in dim_avg_order.iterrows():
+        dim = dim_row["dimension"]
+        dim_avg = float(dim_row["dimension_avg"])
+        status, bg, fg = _score_status(dim_avg)
+        dim_safe = html.escape(str(dim))
+
+        sub_df = df[df["dimension"] == dim].copy()
+        sub_df = sub_df.sort_values("sub_code", key=lambda s: s.map(_sub_code_sort_key))
+
+        sub_items = []
+        for _, r in sub_df.iterrows():
+            code = html.escape(str(r["sub_code"] or ""))
+            sub_name = html.escape(str(r["sub_name"] or ""))
+            score = float(r["sub_score"])
+            sub_items.append(
+                f'<div class="hscs-subitem" title="{code}: {sub_name}">'
+                f'<span>{code}</span><strong>{score:.1f}%</strong></div>'
+            )
+
+        tile_html_parts.append(
+            f"""
+            <div class="hscs-dim-tile" style="background:{bg}; color:{fg};" title="{dim_safe}">
+                <div class="hscs-dim-title">{dim_safe}</div>
+                <div>
+                    <div class="hscs-dim-score">{dim_avg:.1f}%</div>
+                    <div class="hscs-dim-status">{html.escape(status)}</div>
+                </div>
+                <div>
+                    <div class="hscs-sub-divider"></div>
+                    <div class="hscs-subgrid">{''.join(sub_items)}</div>
+                </div>
+            </div>
+            """
+        )
+
+    st.markdown(
+        f'<div class="hscs-dim-grid">{"".join(tile_html_parts)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+        <div class="hscs-legend-inline">
+            <span><i class="hscs-legend-dot" style="background:{H_GREEN_BG};"></i>ควรส่งเสริม &gt; 80</span>
+            <span><i class="hscs-legend-dot" style="background:{H_YELLOW_BG};"></i>ควรพัฒนาต่อเนื่อง 70.1–80</span>
+            <span><i class="hscs-legend-dot" style="background:{H_ORANGE_BG};"></i>เร่งพัฒนา 60–70</span>
+            <span><i class="hscs-legend-dot" style="background:{H_RED_BG};"></i>ควรพัฒนาด่วน &lt; 60</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="hscs-section-title">Priority list: ข้อที่มีคะแนนต่ำสุด</div>', unsafe_allow_html=True)
+    priority = (
+        df.sort_values(["sub_score", "dimension", "sub_code"], ascending=[True, True, True])
+        .head(12)
+        .rename(
+            columns={
+                "dimension": "มิติหลัก",
+                "sub_code": "รหัส",
+                "sub_name": "ชื่อมิติย่อย",
+                "sub_score": "% Positive Score",
+                "quadrant": "ระดับการพัฒนา",
+            }
+        )
+    )
+    priority["% Positive Score"] = priority["% Positive Score"].map(lambda x: f"{float(x):.1f}%")
+    st.dataframe(
+        priority[["มิติหลัก", "รหัส", "ชื่อมิติย่อย", "% Positive Score", "ระดับการพัฒนา"]],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.info("ใช้หน้านี้สำหรับอ่านภาพรวมผู้บริหาร และไปต่อที่หน้า Color-coded Matrix เพื่อดูรายละเอียดรายหน่วยงาน/รายข้อ")
+
+
 # =========================================================
 # Heatmap page
 # =========================================================
@@ -902,7 +1185,7 @@ if heatmap_source is not None:
     except Exception:
         pass
 
-page_options = ["Quadrant 4 Quadrants"] + heatmap_pages + ["รายงาน HSCS ฉบับสมบูรณ์"]
+page_options = ["Dashboard ภาพรวม"] + heatmap_pages + ["Quadrant 4 Quadrants", "รายงาน HSCS ฉบับสมบูรณ์"]
 
 page = st.sidebar.radio(
     "เลือกหน้าที่ต้องการดู",
@@ -914,14 +1197,19 @@ st.sidebar.markdown("---")
 st.sidebar.markdown(
     """
 **เกณฑ์สีที่ใช้ร่วมกัน**
-- 🔴 แดง: % Positve Score < 60 = ควรพัฒนาด่วน
-- 🟠 ส้ม: % Positve Score 60–70 = เร่งพัฒนา
-- 🟡 เหลือง: % Positve Score 70.1–80 = ควรพัฒนาต่อเนื่อง
-- 🟢 เขียว: % Positve Score > 80 = ควรส่งเสริม
+- 🔴 แดง: % Positive Score < 60 = ควรพัฒนาด่วน
+- 🟠 ส้ม: % Positive Score 60–70 = เร่งพัฒนา
+- 🟡 เหลือง: % Positive Score 70.1–80 = ควรพัฒนาต่อเนื่อง
+- 🟢 เขียว: % Positive Score > 80 = ควรส่งเสริม
 """
 )
 
-if page == "Quadrant 4 Quadrants":
+if page == "Dashboard ภาพรวม":
+    if quad_source is None:
+        st.warning("ไม่พบไฟล์ Quadrant Excel (`plotgraph_quadrant_infographic.xlsx`) ในโฟลเดอร์โปรเจกต์")
+        st.stop()
+    render_overview_dashboard_page(quad_source, DEFAULT_QUAD_SHEET)
+elif page == "Quadrant 4 Quadrants":
     if quad_source is None:
         st.warning("ไม่พบไฟล์ Quadrant Excel (`plotgraph_quadrant_infographic.xlsx`) ในโฟลเดอร์โปรเจกต์")
         st.stop()
