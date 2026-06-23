@@ -707,8 +707,8 @@ def build_heatmap_figure(long_df: pd.DataFrame, title_text: str = "") -> go.Figu
         width=display_mode["width"],
     )
 
-    fig.update_xaxes(side="top", tickangle=-35, showgrid=False, tickfont=dict(size=11), automargin=True)
-    fig.update_yaxes(autorange="reversed", showgrid=False, tickfont=dict(size=10), automargin=True)
+    fig.update_xaxes(title_text="", side="top", tickangle=-35, showgrid=False, tickfont=dict(size=11), automargin=True)
+    fig.update_yaxes(title_text="", autorange="reversed", showgrid=False, tickfont=dict(size=10), automargin=True)
     return fig
 
 
@@ -730,15 +730,15 @@ def style_heatmap_table(df: pd.DataFrame):
 def render_heatmap_page(heatmap_source, heatmap_sheet: str, selected_page: str):
     long_df, groups = load_heatmap_excel(heatmap_source, sheet_name=heatmap_sheet)
 
-    if selected_page == "Heatmap: ภาพรวมทุกกลุ่ม":
+    if selected_page == "Color-coded Matrix: ภาพรวมทุกกลุ่ม":
         filtered = long_df.copy()
-        page_title = "Heatmap: ภาพรวมทุกกลุ่ม"
-        page_desc = "Heatmap แยกตามกลุ่มงานจากแถวบนสุด"
+        page_title = "Color-coded Matrix: ภาพรวมทุกกลุ่ม"
+        page_desc = "Color-coded Matrix แยกตามกลุ่มงานจากแถวบนสุด"
     else:
-        target_group = selected_page.replace("Heatmap: ", "", 1)
+        target_group = selected_page.replace("Color-coded Matrix: ", "", 1)
         filtered = long_df[long_df["group"] == target_group].copy()
-        page_title = f"Heatmap: {target_group}"
-        page_desc = "Heatmap แยกตามกลุ่มงานจากแถวบนสุด"
+        page_title = f"Color-coded Matrix: {target_group}"
+        page_desc = "Color-coded Matrix แยกตามกลุ่มงานจากแถวบนสุด"
 
     st.title(page_title)
     st.markdown(page_desc)
@@ -750,7 +750,7 @@ def render_heatmap_page(heatmap_source, heatmap_sheet: str, selected_page: str):
     all_dims = filtered["dimension"].dropna().unique().tolist()
     all_units = filtered["unit"].dropna().unique().tolist()
 
-    with st.sidebar.expander("ตัวกรอง Heatmap", expanded=True):
+    with st.sidebar.expander("ตัวกรอง Color-coded Matrix", expanded=True):
         dim_filter = st.multiselect(
             "เลือกมิติหลัก",
             options=all_dims,
@@ -794,11 +794,6 @@ def render_heatmap_page(heatmap_source, heatmap_sheet: str, selected_page: str):
 
 def render_quadrant_page(quad_source, quad_sheet: str):
     st.title("📊 Quadrant Graph แบบ Interactive Infographic")
-    st.markdown(
-        "หน้าเดิมของ Quadrant พร้อม logic ล่าสุดที่คุณอนุมัติแล้ว  \n"
-        "คำอธิบายด้านบนถูกเปลี่ยนเป็น **% positive response** แล้ว"
-    )
-
     df = load_quadrant_excel(quad_source, sheet_name=quad_sheet)
     df = apply_quadrant_logic(df)
     df = assign_positions_by_quadrant(df)
@@ -895,12 +890,15 @@ st.sidebar.title("MFU-MCH-HSCS 2025")
 quad_source = DEFAULT_QUAD_FILE if DEFAULT_QUAD_FILE.exists() else None
 heatmap_source = DEFAULT_HEATMAP_FILE if DEFAULT_HEATMAP_FILE.exists() else None
 
-heatmap_pages = ["Heatmap: ภาพรวมทุกกลุ่ม"]
+heatmap_pages = ["Color-coded Matrix: ภาพรวมทุกกลุ่ม"]
 if heatmap_source is not None:
     try:
         _, group_names = load_heatmap_excel(heatmap_source, sheet_name=DEFAULT_HEATMAP_SHEET)
-        group_names = [g for g in group_names if str(g).strip() != "ภาพรวม"]
-        heatmap_pages += [f"Heatmap: {g}" for g in group_names]
+        group_names = [
+            g for g in group_names
+            if str(g).strip() not in ["", "ภาพรวม", "undefined", "None", "nan"]
+        ]
+        heatmap_pages += [f"Color-coded Matrix: {g}" for g in group_names]
     except Exception:
         pass
 
@@ -932,6 +930,6 @@ elif page == "รายงาน HSCS ฉบับสมบูรณ์":
     render_full_report_page()
 else:
     if heatmap_source is None:
-        st.warning("ไม่พบไฟล์ Heatmap Excel (`HSCS2568_interac.xlsx`) ในโฟลเดอร์โปรเจกต์")
+        st.warning("ไม่พบไฟล์ Color-coded Matrix Excel (`HSCS2568_interac.xlsx`) ในโฟลเดอร์โปรเจกต์")
         st.stop()
     render_heatmap_page(heatmap_source, DEFAULT_HEATMAP_SHEET, page)
