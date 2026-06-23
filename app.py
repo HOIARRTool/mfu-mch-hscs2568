@@ -576,11 +576,12 @@ def _render_dashboard_css():
         }
         .hscs-subitem {
             min-width: 31%;
-            padding: 2px 3px 3px 3px;
+            padding: 3px 4px 4px 4px;
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.12);
             text-align: center;
             line-height: 1.08;
+            border: 1px solid rgba(255, 255, 255, 0.78);
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(15, 23, 42, 0.14);
         }
         .hscs-subitem span {
             display: block;
@@ -677,8 +678,9 @@ def render_overview_dashboard_page(quad_source, quad_sheet: str):
             code = html.escape(str(r["sub_code"] or ""))
             sub_name = html.escape(str(r["sub_name"] or ""))
             score = float(r["sub_score"])
+            sub_status, sub_bg, sub_fg = _score_status(score)
             sub_items.append(
-                f'<div class="hscs-subitem" title="{code}: {sub_name}">'
+                f'<div class="hscs-subitem" style="background:{sub_bg}; color:{sub_fg};" title="{code}: {sub_name} | {html.escape(sub_status)}">'
                 f'<span>{code}</span><strong>{score:.1f}%</strong></div>'
             )
 
@@ -733,7 +735,6 @@ def render_overview_dashboard_page(quad_source, quad_sheet: str):
         hide_index=True,
     )
 
-    st.info("ใช้หน้านี้สำหรับอ่านภาพรวมผู้บริหาร และไปต่อที่หน้า Color-coded Matrix เพื่อดูรายละเอียดรายหน่วยงาน/รายข้อ")
 
 
 # =========================================================
@@ -1128,8 +1129,8 @@ def render_quadrant_page(quad_source, quad_sheet: str):
 
 
 def render_full_report_page():
-    st.title("📘 รายงาน HSCS ฉบับสมบูรณ์")
-    st.markdown("Preview card ของ Google Sites พร้อมปุ่มเปิดรายงานฉบับเต็ม")
+    st.title("📘 การประมวลผล HSCS จากสรพ.")
+    st.markdown("Preview card ของแหล่งข้อมูล/เว็บไซต์ต้นทาง")
 
     card_html = """
     <div style="
@@ -1143,7 +1144,7 @@ def render_full_report_page():
             Hospital Safety Culture Survey (HSCS)
         </div>
         <div style="font-size: 15px; color: #4a678f; line-height: 1.6;">
-            รายงานฉบับสมบูรณ์บน Google Sites ของ HSCS ปี 2567–2568
+            การประมวลผล HSCS จาก สรพ. ปี 2567–2568
             หน้านี้ใช้ <b>preview card</b> แทนการฝังเว็บตรง เพื่อให้แสดงผลเสถียรกว่า
         </div>
     </div>
@@ -1157,7 +1158,7 @@ def render_full_report_page():
 
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.link_button("🔗 เปิด Google Sites ฉบับเต็ม", REPORT_URL, use_container_width=True)
+        st.link_button("🔗 เปิดการประมวลผล HSCS จากสรพ.", REPORT_URL, use_container_width=True)
     with c2:
         st.caption("ถ้าต้องการดูรายละเอียดทั้งหมด แนะนำให้เปิดในแท็บใหม่เพื่อการใช้งานที่ครบถ้วนที่สุด")
 
@@ -1182,7 +1183,7 @@ if heatmap_source is not None:
     except Exception:
         pass
 
-page_options = ["Dashboard ภาพรวม"] + heatmap_pages + ["Quadrant 4 Quadrants", "รายงาน HSCS ฉบับสมบูรณ์"]
+page_options = ["Dashboard ภาพรวม"] + heatmap_pages + ["Quadrant 4 Quadrants", "การประมวลผล HSCS จากสรพ."]
 
 page = st.sidebar.radio(
     "เลือกหน้าที่ต้องการดู",
@@ -1211,7 +1212,7 @@ elif page == "Quadrant 4 Quadrants":
         st.warning("ไม่พบไฟล์ Quadrant Excel (`plotgraph_quadrant_infographic.xlsx`) ในโฟลเดอร์โปรเจกต์")
         st.stop()
     render_quadrant_page(quad_source, DEFAULT_QUAD_SHEET)
-elif page == "รายงาน HSCS ฉบับสมบูรณ์":
+elif page == "การประมวลผล HSCS จากสรพ.":
     render_full_report_page()
 else:
     if heatmap_source is None:
