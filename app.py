@@ -595,9 +595,12 @@ def build_dimension_trend_figure(dim_trend_df: pd.DataFrame, dim_label: str) -> 
         )
     )
 
-    all_years = sorted(int(y) for y in HSCS_YEAR_CONFIG.keys())
-    x_min = min(all_years) - 0.25
-    x_max = max(all_years) + 0.25
+    # Show the planning horizon even if future-year data are not available yet.
+    # The plotted line still uses only available data points, while the x-axis
+    # leaves visual space for future HSCS cycles.
+    all_years = [2568, 2569, 2570, 2571, 2572]
+    x_min = 2567.75
+    x_max = 2572.25
 
     fig.update_layout(
         title=dict(text=dim_label, font=dict(size=15, color="#34138B"), x=0.0, xanchor="left"),
@@ -628,7 +631,7 @@ def render_dimension_trend_section():
     """Render year-to-year dimension trends, independent of the selected dashboard year."""
     st.markdown('<div class="hscs-section-title">แนวโน้มคะแนนเฉลี่ยรายมิติ</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="hscs-trend-note">เปรียบเทียบคะแนนเฉลี่ยรายมิติจากคอลัมน์ “ภาพรวม” ของแต่ละปี จึงไม่ขึ้นกับปีที่เลือกใน sidebar</div>',
+        '<div class="hscs-trend-note">เปรียบเทียบคะแนนเฉลี่ยรายมิติจากคอลัมน์ “ภาพรวม” ของแต่ละปี โดยแสดงแกนเวลา 2568–2572 เพื่อใช้ติดตามแนวโน้มระยะต่อไป</div>',
         unsafe_allow_html=True,
     )
 
