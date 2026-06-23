@@ -39,6 +39,8 @@ DEFAULT_HEATMAP_SHEET = "HSCS2568"
 
 REPORT_URL = "https://sites.google.com/view/mch-hscs67-68/%E0%B8%A0%E0%B8%B2%E0%B8%9E%E0%B8%A3%E0%B8%A7%E0%B8%A1?authuser=0"
 REPORT_PREVIEW_IMAGE = Path("hscs_report_preview.png")
+MFU_LOGO_URL = "https://mfu.ac.th/fileadmin/_processed_/6/7/csm_logo_mfu_3d_colour_15e5a7a50f.png?raw=true"
+HAI_LOGO_URL = "https://github.com/HOIARRTool/appqtbi/blob/main/messageImage_1763018963411.jpg?raw=true"
 
 
 def classify_score_quadrant(score: float) -> tuple[str, str]:
@@ -497,9 +499,16 @@ def _render_dashboard_css():
             background: linear-gradient(135deg, #ffffff 0%, #f4f8ff 100%);
             border: 1px solid #dbe5f0;
             border-radius: 22px;
-            padding: 22px 24px;
+            padding: 18px 22px 18px 24px;
             margin-bottom: 18px;
             box-shadow: 0 8px 24px rgba(15, 23, 42, 0.045);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 18px;
+        }
+        .hscs-hero-text {
+            min-width: 0;
         }
         .hscs-hero h1 {
             color: #173B71;
@@ -511,6 +520,28 @@ def _render_dashboard_css():
             color: #64748B;
             margin: 0;
             font-size: 1.0rem;
+        }
+        .hscs-hero-logos {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 12px;
+            flex: 0 0 auto;
+        }
+        .hscs-hero-logo {
+            height: 58px;
+            max-width: 155px;
+            object-fit: contain;
+            background: #FFFFFF;
+            border: 1px solid #E2E8F0;
+            border-radius: 14px;
+            padding: 6px 8px;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+        }
+        @media (max-width: 760px) {
+            .hscs-hero { align-items: flex-start; flex-direction: column; }
+            .hscs-hero-logos { justify-content: flex-start; }
+            .hscs-hero-logo { height: 48px; max-width: 128px; }
         }
         .hscs-section-title {
             color: #173B71;
@@ -640,12 +671,10 @@ def render_overview_dashboard_page(quad_source, quad_sheet: str):
     sub_count = int(df[["sub_code", "sub_name"]].drop_duplicates().shape[0])
 
     st.markdown(
-        """
-        <div class="hscs-hero">
-            <h1>MFU-MCH HSCS Dashboard 2025</h1>
-            <p>Hospital Safety Culture Survey: executive overview + drill-down Color-coded Matrix</p>
-        </div>
-        """,
+        f'<div class="hscs-hero"><div class="hscs-hero-text"><h1>MFU-MCH HSCS Dashboard</h1>'
+        f'<p>Hospital Safety Culture Survey: executive overview + drill-down Color-coded Matrix</p></div>'
+        f'<div class="hscs-hero-logos"><img class="hscs-hero-logo" src="{MFU_LOGO_URL}" alt="Mae Fah Luang University logo">'
+        f'<img class="hscs-hero-logo" src="{HAI_LOGO_URL}" alt="Healthcare Accreditation Institute logo"></div></div>',
         unsafe_allow_html=True,
     )
 
