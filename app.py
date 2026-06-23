@@ -486,10 +486,183 @@ def _render_dashboard_css():
             .hscs-dim-grid { grid-template-columns: repeat(1, minmax(0, 1fr)); }
             .hscs-dim-tile { min-height: 150px; }
         }
+        .hscs-trend-note {
+            color: #64748B;
+            font-size: 0.88rem;
+            margin: -4px 0 14px 0;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _dimension_key(dim_name: str) -> str:
+    """Stable key for comparing dimensions across years; use the leading number when present."""
+    m = re.match(r"^\s*(\d+)", str(dim_name or ""))
+    return m.group(1) if m else str(dim_name or "").strip()
+
+
+@st.cache_data(show_spinner=False)
+def load_dimension_trend_data() -> tuple[pd.DataFrame, list[str]]:
+    """
+    Load dimension-level overview scores for every configured year.
+
+    Important: this uses the same workbook loader and the same
+    build_overview_df_from_heatmap() logic as the executive dashboard. That keeps
+    the trend section aligned with the dashboard's 'ภาพรวม' scores and prevents
+    accidental mixing with group-split columns.
+    """
+    rows = []
+    notes = []
+
+    for year, cfg in HSCS_YEAR_CONFIG.items():
+        file_path = cfg["file"]
+        sheet_name = cfg["sheet"]
+
+        if not file_path.exists():
+            notes.append(f"ไม่พบไฟล์ {cfg['label']}: {file_path.name}")
+            continue
+
+        try:
+            long_df, _ = load_heatmap_excel(file_path, sheet_name=sheet_name)
+            overview_df = build_overview_df_from_heatmap(long_df)
+        except Exception as exc:
+            notes.append(f"โหลดข้อมูล {cfg['label']} ไม่สำเร็จ: {exc}")
+            continue
+
+        dim_df = (
+            overview_df[["dimension", "dimension_avg"]]
+            .drop_duplicates()
+            .dropna(subset=["dimension_avg"])
+            .copy()
+        )
+        dim_df["year"] = int(year)
+        dim_df["year_label"] = cfg["label"]
+        dim_df["dimension_key"] = dim_df["dimension"].map(_dimension_key)
+
+        rows.extend(dim_df.to_dict("records"))
+
+    trend_df = pd.DataFrame(rows)
+    if trend_df.empty:
+        return trend_df, notes
+
+    # Prefer the newest available dimension label for display, but keep numeric ordering.
+    latest_labels = (
+        trend_df.sort_values(["dimension_key", "year"])
+        .groupby("dimension_key", as_index=False)
+        .tail(1)[["dimension_key", "dimension"]]
+        .rename(columns={"dimension": "display_dimension"})
+    )
+    trend_df = trend_df.merge(latest_labels, on="dimension_key", how="left")
+    return trend_df, notes
+
+
+def build_dimension_trend_figure(dim_trend_df: pd.DataFrame, dim_label: str) -> go.Figure:
+    """Small per-dimension year trend chart for the dashboard."""
+    d = dim_trend_df.sort_values("year").copy()
+
+    y_values = pd.to_numeric(d["dimension_avg"], errors="coerce").dropna().tolist()
+    if y_values:
+        y_min = max(0, (int(min(y_values) // 10) * 10) - 10)
+        y_max = min(100, (int(max(y_values) // 10) * 10) + 20)
+        if y_max - y_min < 30:
+            y_min = max(0, y_min - 10)
+            y_max = min(100, y_max + 10)
+    else:
+        y_min, y_max = 0, 100
+
+    years = d["year"].astype(int).tolist()
+    scores = pd.to_numeric(d["dimension_avg"], errors="coerce").tolist()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=years,
+            y=scores,
+            mode="lines+markers+text",
+            line=dict(width=2.5, color="#173B71"),
+            marker=dict(
+                size=11,
+                color=[heatmap_bg_color(v) for v in scores],
+                line=dict(color="#FFFFFF", width=1.5),
+            ),
+            text=[f"{v:.1f}%" if pd.notna(v) else "" for v in scores],
+            textposition="top center",
+            textfont=dict(size=11, color="#0F172A"),
+            hovertemplate="ปี %{x}<br>คะแนนเฉลี่ยรายมิติ: %{y:.1f}%<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    all_years = sorted(int(y) for y in HSCS_YEAR_CONFIG.keys())
+    x_min = min(all_years) - 0.25
+    x_max = max(all_years) + 0.25
+
+    fig.update_layout(
+        title=dict(text=dim_label, font=dict(size=15, color="#34138B"), x=0.0, xanchor="left"),
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        height=255,
+        margin=dict(l=34, r=18, t=58, b=34),
+    )
+    fig.update_xaxes(
+        tickmode="array",
+        tickvals=all_years,
+        range=[x_min, x_max],
+        showgrid=False,
+        zeroline=False,
+        tickfont=dict(size=11),
+    )
+    fig.update_yaxes(
+        range=[y_min, y_max],
+        showgrid=True,
+        gridcolor="#E5E7EB",
+        zeroline=False,
+        tickfont=dict(size=11),
+    )
+    return fig
+
+
+def render_dimension_trend_section():
+    """Render year-to-year dimension trends, independent of the selected dashboard year."""
+    st.markdown('<div class="hscs-section-title">แนวโน้มคะแนนเฉลี่ยรายมิติ</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hscs-trend-note">เปรียบเทียบคะแนนเฉลี่ยรายมิติจากคอลัมน์ “ภาพรวม” ของแต่ละปี จึงไม่ขึ้นกับปีที่เลือกใน sidebar</div>',
+        unsafe_allow_html=True,
+    )
+
+    trend_df, notes = load_dimension_trend_data()
+    if trend_df.empty:
+        st.info("ยังไม่พบข้อมูลเพียงพอสำหรับแสดงแนวโน้มรายมิติ")
+        if notes:
+            with st.expander("รายละเอียดการโหลดข้อมูลแนวโน้ม", expanded=False):
+                for note in notes:
+                    st.write(f"- {note}")
+        return
+
+    dim_order = (
+        trend_df[["dimension_key", "display_dimension"]]
+        .drop_duplicates()
+        .sort_values("display_dimension", key=lambda s: s.map(_dimension_sort_key))
+    )
+
+    cols_per_row = 4
+    dims = dim_order.to_dict("records")
+    for start in range(0, len(dims), cols_per_row):
+        cols = st.columns(cols_per_row)
+        for i, dim_info in enumerate(dims[start:start + cols_per_row]):
+            dim_key = dim_info["dimension_key"]
+            dim_label = dim_info["display_dimension"]
+            dim_trend = trend_df[trend_df["dimension_key"] == dim_key].copy()
+            fig = build_dimension_trend_figure(dim_trend, dim_label)
+            with cols[i]:
+                st.plotly_chart(fig, use_container_width=True, key=f"trend_dim_{dim_key}")
+
+    if notes:
+        with st.expander("หมายเหตุการโหลดข้อมูลแนวโน้ม", expanded=False):
+            for note in notes:
+                st.write(f"- {note}")
 
 
 def render_overview_dashboard_page(heatmap_source: Path, heatmap_sheet: str, year_label: str):
@@ -576,6 +749,8 @@ def render_overview_dashboard_page(heatmap_source: Path, heatmap_sheet: str, yea
         """,
         unsafe_allow_html=True,
     )
+
+    render_dimension_trend_section()
 
     st.markdown('<div class="hscs-section-title">Priority list: ข้อที่มีคะแนนต่ำสุด</div>', unsafe_allow_html=True)
     priority = (
