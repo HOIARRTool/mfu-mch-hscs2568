@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 import html
 from pathlib import Path
@@ -40,8 +42,6 @@ HSCS_YEAR_CONFIG = {
     },
 }
 
-REPORT_URL = "https://sites.google.com/view/mch-hscs67-68/%E0%B8%A0%E0%B8%B2%E0%B8%9E%E0%B8%A3%E0%B8%A7%E0%B8%A1?authuser=0"
-REPORT_PREVIEW_IMAGE = BASE_DIR / "hscs_report_preview.png"
 MFU_LOGO_URL = "https://mfu.ac.th/fileadmin/_processed_/6/7/csm_logo_mfu_3d_colour_15e5a7a50f.png?raw=true"
 HAI_LOGO_URL = "https://github.com/HOIARRTool/appqtbi/blob/main/messageImage_1763018963411.jpg?raw=true"
 
@@ -285,30 +285,18 @@ def load_heatmap_excel(file_path: Path, sheet_name: str) -> tuple[pd.DataFrame, 
     return long_df, ordered_groups
 
 
-def build_overview_df_from_heatmap(long_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build the executive dashboard source from the 'ภาพรวม' column in HSCS*_interac.xlsx.
-    If a workbook has no explicit 'ภาพรวม' column, fallback to mean across units.
-    """
-    df = long_df.copy()
-
-    overall_mask = (
-        df["unit"].astype(str).str.strip().eq("ภาพรวม")
-        | df["division"].astype(str).str.strip().eq("ภาพรวม")
-        | df["group"].astype(str).str.strip().eq("ภาพรวม")
-    )
-
-    if overall_mask.any():
-        overall_cols = sorted(df.loc[overall_mask, "col_index"].dropna().unique().tolist())
-        target_col = overall_cols[0]
-        out = df[df["col_index"] == target_col].copy()
-        out = out[["dimension", "sub_code", "sub_name", "score"]].rename(columns={"score": "sub_score"})
-    else:
-        out = (
-            df.groupby(["dimension", "sub_code", "sub_name"], dropna=False)["score"]
-            .mean()
-            .reset_index()
-            .rename(columns={"score": "sub_score"})
+def _finalize_dashboard_df(out: pd.DataFrame) -> pd.DataFrame:
+    """Normalize item scores and add dimension averages/development labels."""
+    if out.empty:
+        return pd.DataFrame(
+            columns=[
+                "dimension",
+                "sub_code",
+                "sub_name",
+                "sub_score",
+                "dimension_avg",
+                "development_level",
+            ]
         )
 
     out = out.dropna(subset=["sub_score"]).copy()
@@ -322,8 +310,103 @@ def build_overview_df_from_heatmap(long_df: pd.DataFrame) -> pd.DataFrame:
         .reset_index()
     )
     out = out.merge(dim_avg, on="dimension", how="left")
-    out["development_level"] = out["sub_score"].apply(lambda x: classify_score(float(x))[0])
+    out["development_level"] = out["sub_score"].apply(
+        lambda x: classify_score(float(x))[0]
+    )
     return out
+
+
+def build_overview_df_from_heatmap(long_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build the executive dashboard source from the grand-total 'ภาพรวม' column.
+    If the workbook has no explicit grand-total column, fall back to the mean
+    across all available unit columns.
+    """
+    df = long_df.copy()
+
+    overall_mask = (
+        df["unit"].astype(str).str.strip().eq("ภาพรวม")
+        | df["division"].astype(str).str.strip().eq("ภาพรวม")
+        | df["group"].astype(str).str.strip().eq("ภาพรวม")
+    )
+
+    if overall_mask.any():
+        overall_cols = sorted(
+            df.loc[overall_mask, "col_index"].dropna().unique().tolist()
+        )
+        target_col = overall_cols[0]
+        out = (
+            df[df["col_index"] == target_col][
+                ["dimension", "sub_code", "sub_name", "score"]
+            ]
+            .copy()
+            .rename(columns={"score": "sub_score"})
+        )
+    else:
+        out = (
+            df.groupby(
+                ["dimension", "sub_code", "sub_name"], dropna=False
+            )["score"]
+            .mean()
+            .reset_index()
+            .rename(columns={"score": "sub_score"})
+        )
+
+    return _finalize_dashboard_df(out)
+
+
+def get_dashboard_units(long_df: pd.DataFrame) -> list[str]:
+    """Return real unit/work-area names in workbook column order."""
+    unit_df, _ = select_all_groups_matrix(long_df)
+    unit_meta = (
+        unit_df[["col_index", "unit"]]
+        .drop_duplicates()
+        .sort_values("col_index")
+        .copy()
+    )
+    unit_meta["unit_clean"] = (
+        unit_meta["unit"]
+        .astype(str)
+        .str.replace("\n", " ", regex=False)
+        .str.strip()
+    )
+
+    excluded = {"", "ภาพรวม", "undefined", "None", "nan"}
+    units = []
+    for unit in unit_meta["unit_clean"].tolist():
+        if unit in excluded:
+            continue
+        if unit not in units:
+            units.append(unit)
+    return units
+
+
+def build_unit_dashboard_df(
+    long_df: pd.DataFrame, selected_unit: str
+) -> pd.DataFrame:
+    """Build the same dashboard structure for one selected unit/work area."""
+    unit_df, _ = select_all_groups_matrix(long_df)
+    unit_clean = (
+        unit_df["unit"]
+        .astype(str)
+        .str.replace("\n", " ", regex=False)
+        .str.strip()
+    )
+    selected_clean = str(selected_unit).replace("\n", " ").strip()
+    subset = unit_df[unit_clean.eq(selected_clean)].copy()
+
+    if subset.empty:
+        return _finalize_dashboard_df(pd.DataFrame())
+
+    out = (
+        subset.groupby(
+            ["dimension", "sub_code", "sub_name"], dropna=False
+        )["score"]
+        .mean()
+        .reset_index()
+        .rename(columns={"score": "sub_score"})
+    )
+    return _finalize_dashboard_df(out)
 
 
 # =========================================================
@@ -504,14 +587,15 @@ def _dimension_key(dim_name: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def load_dimension_trend_data() -> tuple[pd.DataFrame, list[str]]:
+def load_dimension_trend_data(
+    selected_unit: str = None,
+) -> tuple[pd.DataFrame, list[str]]:
     """
-    Load dimension-level overview scores for every configured year.
+    Load dimension-level scores for every configured year.
 
-    Important: this uses the same workbook loader and the same
-    build_overview_df_from_heatmap() logic as the executive dashboard. That keeps
-    the trend section aligned with the dashboard's 'ภาพรวม' scores and prevents
-    accidental mixing with group-split columns.
+    For the organization view, use the grand-total overview column.
+    For a unit view, use the same named unit in each year. If that exact unit
+    name is absent in a year, skip that year and report it in the notes.
     """
     rows = []
     notes = []
@@ -526,13 +610,21 @@ def load_dimension_trend_data() -> tuple[pd.DataFrame, list[str]]:
 
         try:
             long_df, _ = load_heatmap_excel(file_path, sheet_name=sheet_name)
-            overview_df = build_overview_df_from_heatmap(long_df)
+            if selected_unit:
+                dashboard_df = build_unit_dashboard_df(long_df, selected_unit)
+                if dashboard_df.empty:
+                    notes.append(
+                        f"ไม่พบหน่วยงาน “{selected_unit}” ในข้อมูล {cfg['label']}"
+                    )
+                    continue
+            else:
+                dashboard_df = build_overview_df_from_heatmap(long_df)
         except Exception as exc:
             notes.append(f"โหลดข้อมูล {cfg['label']} ไม่สำเร็จ: {exc}")
             continue
 
         dim_df = (
-            overview_df[["dimension", "dimension_avg"]]
+            dashboard_df[["dimension", "dimension_avg"]]
             .drop_duplicates()
             .dropna(subset=["dimension_avg"])
             .copy()
@@ -547,7 +639,6 @@ def load_dimension_trend_data() -> tuple[pd.DataFrame, list[str]]:
     if trend_df.empty:
         return trend_df, notes
 
-    # Prefer the newest available dimension label for display, but keep numeric ordering.
     latest_labels = (
         trend_df.sort_values(["dimension_key", "year"])
         .groupby("dimension_key", as_index=False)
@@ -627,81 +718,168 @@ def build_dimension_trend_figure(dim_trend_df: pd.DataFrame, dim_label: str) -> 
     return fig
 
 
-def render_dimension_trend_section():
-    """Render year-to-year dimension trends, independent of the selected dashboard year."""
-    st.markdown('<div class="hscs-section-title">แนวโน้มคะแนนเฉลี่ยรายมิติ</div>', unsafe_allow_html=True)
+def render_dimension_trend_section(selected_unit: str = None):
+    """Render year-to-year trends for the organization or selected unit."""
     st.markdown(
-        '<div class="hscs-trend-note">เปรียบเทียบคะแนนเฉลี่ยรายมิติจากคอลัมน์ “ภาพรวม” ของแต่ละปี โดยแสดงแกนเวลา 2568–2572 เพื่อใช้ติดตามแนวโน้มระยะต่อไป</div>',
+        '<div class="hscs-section-title">แนวโน้มคะแนนเฉลี่ยรายมิติ</div>',
         unsafe_allow_html=True,
     )
 
-    trend_df, notes = load_dimension_trend_data()
+    if selected_unit:
+        note = (
+            f'เปรียบเทียบคะแนนเฉลี่ยรายมิติของหน่วยงาน '
+            f'“{html.escape(selected_unit)}” ระหว่างปี 2568–2569 '
+            f'โดยแสดงเฉพาะปีที่พบชื่อหน่วยงานตรงกัน'
+        )
+    else:
+        note = (
+            'เปรียบเทียบคะแนนเฉลี่ยรายมิติจากคอลัมน์ “ภาพรวม” '
+            'ของปี 2568–2569'
+        )
+
+    st.markdown(
+        f'<div class="hscs-trend-note">{note}</div>',
+        unsafe_allow_html=True,
+    )
+
+    trend_df, notes = load_dimension_trend_data(selected_unit)
     if trend_df.empty:
         st.info("ยังไม่พบข้อมูลเพียงพอสำหรับแสดงแนวโน้มรายมิติ")
         if notes:
             with st.expander("รายละเอียดการโหลดข้อมูลแนวโน้ม", expanded=False):
-                for note in notes:
-                    st.write(f"- {note}")
+                for note_item in notes:
+                    st.write(f"- {note_item}")
         return
 
     dim_order = (
         trend_df[["dimension_key", "display_dimension"]]
         .drop_duplicates()
-        .sort_values("display_dimension", key=lambda s: s.map(_dimension_sort_key))
+        .sort_values(
+            "display_dimension",
+            key=lambda s: s.map(_dimension_sort_key),
+        )
     )
+
+    chart_scope = re.sub(
+        r"[^0-9A-Za-zก-๙]+",
+        "_",
+        selected_unit or "organization",
+    ).strip("_")
 
     cols_per_row = 4
     dims = dim_order.to_dict("records")
-    for start in range(0, len(dims), cols_per_row):
+    for start_idx in range(0, len(dims), cols_per_row):
         cols = st.columns(cols_per_row)
-        for i, dim_info in enumerate(dims[start:start + cols_per_row]):
+        for i, dim_info in enumerate(dims[start_idx:start_idx + cols_per_row]):
             dim_key = dim_info["dimension_key"]
             dim_label = dim_info["display_dimension"]
-            dim_trend = trend_df[trend_df["dimension_key"] == dim_key].copy()
+            dim_trend = trend_df[
+                trend_df["dimension_key"] == dim_key
+            ].copy()
             fig = build_dimension_trend_figure(dim_trend, dim_label)
             with cols[i]:
-                st.plotly_chart(fig, use_container_width=True, key=f"trend_dim_{dim_key}")
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key=f"trend_{chart_scope}_{dim_key}",
+                )
 
     if notes:
-        with st.expander("หมายเหตุการโหลดข้อมูลแนวโน้ม", expanded=False):
-            for note in notes:
-                st.write(f"- {note}")
+        with st.expander("หมายเหตุการเปรียบเทียบข้ามปี", expanded=False):
+            for note_item in notes:
+                st.write(f"- {note_item}")
 
 
-def render_overview_dashboard_page(heatmap_source: Path, heatmap_sheet: str, year_label: str):
-    """Executive dashboard using the selected HSCS interac workbook."""
+def render_overview_dashboard_page(
+    heatmap_source: Path,
+    heatmap_sheet: str,
+    year_label: str,
+):
+    """Executive dashboard with organization and unit-level drill-down."""
     _render_dashboard_css()
 
-    long_df, _ = load_heatmap_excel(heatmap_source, sheet_name=heatmap_sheet)
-    df = build_overview_df_from_heatmap(long_df)
-
-    overall_score = float(df["sub_score"].mean()) if not df.empty else np.nan
-    overall_status, _, _ = _score_status(overall_score)
-    urgent_count = int((df["sub_score"] < 60).sum())
-    orange_count = int(((df["sub_score"] >= 60) & (df["sub_score"] <= 70)).sum())
-    dim_count = int(df["dimension"].nunique())
-    sub_count = int(df[["sub_code", "sub_name"]].drop_duplicates().shape[0])
+    long_df, _ = load_heatmap_excel(
+        heatmap_source,
+        sheet_name=heatmap_sheet,
+    )
 
     st.markdown(
-        f'<div class="hscs-hero"><div class="hscs-hero-text"><h1>MFU-MCH HSCS Dashboard</h1>'
-        f'<p>Hospital Safety Culture Survey: executive overview + drill-down Color-coded Matrix | {html.escape(year_label)}</p></div>'
-        f'<div class="hscs-hero-logos"><img class="hscs-hero-logo" src="{MFU_LOGO_URL}" alt="Mae Fah Luang University logo">'
-        f'<img class="hscs-hero-logo" src="{HAI_LOGO_URL}" alt="Healthcare Accreditation Institute logo"></div></div>',
+        f'<div class="hscs-hero"><div class="hscs-hero-text">'
+        f'<h1>MFU-MCH HSCS Dashboard</h1>'
+        f'<p>Hospital Safety Culture Survey: executive overview + '
+        f'drill-down Color-coded Matrix | {html.escape(year_label)}</p></div>'
+        f'<div class="hscs-hero-logos">'
+        f'<img class="hscs-hero-logo" src="{MFU_LOGO_URL}" '
+        f'alt="Mae Fah Luang University logo">'
+        f'<img class="hscs-hero-logo" src="{HAI_LOGO_URL}" '
+        f'alt="Healthcare Accreditation Institute logo"></div></div>',
         unsafe_allow_html=True,
     )
 
+    unit_options = get_dashboard_units(long_df)
+    view_options = ["ภาพรวมทั้งองค์กร"] + unit_options
+    selected_view = st.selectbox(
+        "คลิกเลือกมุมมอง Dashboard",
+        options=view_options,
+        index=0,
+        key=f"dashboard_view_{year_label}",
+    )
+    selected_unit = (
+        None if selected_view == "ภาพรวมทั้งองค์กร" else selected_view
+    )
+
+    if selected_unit:
+        df = build_unit_dashboard_df(long_df, selected_unit)
+        st.caption(
+            f"กำลังแสดงผลหน่วยงาน: **{selected_unit}** | {year_label}"
+        )
+    else:
+        df = build_overview_df_from_heatmap(long_df)
+        st.caption(f"กำลังแสดงผล: **ภาพรวมทั้งองค์กร** | {year_label}")
+
+    if df.empty:
+        st.warning("ไม่พบข้อมูลสำหรับมุมมองที่เลือก")
+        return
+
+    overall_score = float(df["sub_score"].mean())
+    overall_status, _, _ = _score_status(overall_score)
+    urgent_count = int((df["sub_score"] < 60).sum())
+    orange_count = int(
+        ((df["sub_score"] >= 60) & (df["sub_score"] <= 70)).sum()
+    )
+    dim_count = int(df["dimension"].nunique())
+    sub_count = int(
+        df[["sub_code", "sub_name"]].drop_duplicates().shape[0]
+    )
+
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Overall Positive Score", f"{overall_score:.1f}%", overall_status)
+    m1.metric(
+        "Overall Positive Score",
+        f"{overall_score:.1f}%",
+        overall_status,
+    )
     m2.metric("จำนวนมิติหลัก", f"{dim_count:,}")
     m3.metric("จำนวนมิติย่อย", f"{sub_count:,}")
-    m4.metric("ข้อควรพัฒนาด่วน", f"{urgent_count:,}", f"เร่งพัฒนา {orange_count:,} ข้อ")
+    m4.metric(
+        "ข้อควรพัฒนาด่วน",
+        f"{urgent_count:,}",
+        f"เร่งพัฒนา {orange_count:,} ข้อ",
+    )
 
-    st.markdown('<div class="hscs-section-title">ร้อยละคำตอบเชิงบวก (% Positive Response) จำแนกตามมิติ</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hscs-section-title">'
+        'ร้อยละคำตอบเชิงบวก (% Positive Response) จำแนกตามมิติ'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     dim_avg_order = (
         df[["dimension", "dimension_avg"]]
         .drop_duplicates()
-        .sort_values("dimension", key=lambda s: s.map(_dimension_sort_key))
+        .sort_values(
+            "dimension",
+            key=lambda s: s.map(_dimension_sort_key),
+        )
     )
 
     tile_html_parts = []
@@ -712,52 +890,72 @@ def render_overview_dashboard_page(heatmap_source: Path, heatmap_sheet: str, yea
         dim_safe = html.escape(str(dim))
 
         sub_df = df[df["dimension"] == dim].copy()
-        sub_df = sub_df.sort_values("sub_code", key=lambda s: s.map(_sub_code_sort_key))
+        sub_df = sub_df.sort_values(
+            "sub_code",
+            key=lambda s: s.map(_sub_code_sort_key),
+        )
 
         sub_items = []
-        for _, r in sub_df.iterrows():
-            code = html.escape(str(r["sub_code"] or ""))
-            sub_name = html.escape(str(r["sub_name"] or ""))
-            score = float(r["sub_score"])
+        for _, row in sub_df.iterrows():
+            code = html.escape(str(row["sub_code"] or ""))
+            sub_name = html.escape(str(row["sub_name"] or ""))
+            score = float(row["sub_score"])
             sub_status, sub_bg, sub_fg = _score_status(score)
             sub_items.append(
-                f'<div class="hscs-subitem" style="background:{sub_bg}; color:{sub_fg};" title="{code}: {sub_name} | {html.escape(sub_status)}">'
+                f'<div class="hscs-subitem" '
+                f'style="background:{sub_bg}; color:{sub_fg};" '
+                f'title="{code}: {sub_name} | '
+                f'{html.escape(sub_status)}">'
                 f'<span>{code}</span><strong>{score:.1f}%</strong></div>'
             )
 
-        sub_items_html = "".join(sub_items)
         tile_html_parts.append(
-            f'<div class="hscs-dim-tile" style="background:{bg}; color:{fg};" title="{dim_safe}">'
+            f'<div class="hscs-dim-tile" '
+            f'style="background:{bg}; color:{fg};" title="{dim_safe}">'
             f'<div class="hscs-dim-title">{dim_safe}</div>'
             f'<div><div class="hscs-dim-score">{dim_avg:.1f}%</div>'
-            f'<div class="hscs-dim-status">{html.escape(status)}</div></div>'
+            f'<div class="hscs-dim-status">'
+            f'{html.escape(status)}</div></div>'
             f'<div><div class="hscs-sub-divider"></div>'
-            f'<div class="hscs-subgrid">{sub_items_html}</div></div>'
-            f'</div>'
+            f'<div class="hscs-subgrid">'
+            f'{"".join(sub_items)}</div></div></div>'
         )
 
     st.markdown(
-        f'<div class="hscs-dim-grid">{"".join(tile_html_parts)}</div>',
+        f'<div class="hscs-dim-grid">'
+        f'{"".join(tile_html_parts)}</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
         f"""
         <div class="hscs-legend-inline">
-            <span><i class="hscs-legend-dot" style="background:{H_GREEN_BG};"></i>ควรส่งเสริม &gt; 80</span>
-            <span><i class="hscs-legend-dot" style="background:{H_YELLOW_BG};"></i>ควรพัฒนาต่อเนื่อง 70.1–80</span>
-            <span><i class="hscs-legend-dot" style="background:{H_ORANGE_BG};"></i>เร่งพัฒนา 60–70</span>
-            <span><i class="hscs-legend-dot" style="background:{H_RED_BG};"></i>ควรพัฒนาด่วน &lt; 60</span>
+            <span><i class="hscs-legend-dot"
+            style="background:{H_GREEN_BG};"></i>ควรส่งเสริม &gt; 80</span>
+            <span><i class="hscs-legend-dot"
+            style="background:{H_YELLOW_BG};"></i>ควรพัฒนาต่อเนื่อง
+            70.1–80</span>
+            <span><i class="hscs-legend-dot"
+            style="background:{H_ORANGE_BG};"></i>เร่งพัฒนา 60–70</span>
+            <span><i class="hscs-legend-dot"
+            style="background:{H_RED_BG};"></i>ควรพัฒนาด่วน &lt; 60</span>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    render_dimension_trend_section()
+    render_dimension_trend_section(selected_unit)
 
-    st.markdown('<div class="hscs-section-title">Priority list: ข้อที่มีคะแนนต่ำสุด</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="hscs-section-title">'
+        'Priority list: ข้อที่มีคะแนนต่ำสุด</div>',
+        unsafe_allow_html=True,
+    )
     priority = (
-        df.sort_values(["sub_score", "dimension", "sub_code"], ascending=[True, True, True])
+        df.sort_values(
+            ["sub_score", "dimension", "sub_code"],
+            ascending=[True, True, True],
+        )
         .head(12)
         .rename(
             columns={
@@ -769,9 +967,19 @@ def render_overview_dashboard_page(heatmap_source: Path, heatmap_sheet: str, yea
             }
         )
     )
-    priority["% Positive Score"] = priority["% Positive Score"].map(lambda x: f"{float(x):.1f}%")
+    priority["% Positive Score"] = priority["% Positive Score"].map(
+        lambda x: f"{float(x):.1f}%"
+    )
     st.dataframe(
-        priority[["มิติหลัก", "รหัส", "ชื่อมิติย่อย", "% Positive Score", "ระดับการพัฒนา"]],
+        priority[
+            [
+                "มิติหลัก",
+                "รหัส",
+                "ชื่อมิติย่อย",
+                "% Positive Score",
+                "ระดับการพัฒนา",
+            ]
+        ],
         use_container_width=True,
         hide_index=True,
     )
@@ -1090,44 +1298,6 @@ def render_heatmap_page(heatmap_source: Path, heatmap_sheet: str, selected_page:
 
 
 # =========================================================
-# Full report page
-# =========================================================
-def render_full_report_page():
-    st.title("📘 การประมวลผล HSCS จากสรพ.")
-    st.markdown("Preview card ของแหล่งข้อมูล/เว็บไซต์ต้นทาง")
-
-    card_html = """
-    <div style="
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-        border: 1px solid #dce6f2;
-        border-radius: 18px;
-        padding: 18px 18px 12px 18px;
-        box-shadow: 0 6px 20px rgba(23,59,113,0.06);
-        margin-bottom: 14px;">
-        <div style="font-size: 24px; font-weight: 700; color: #173B71; margin-bottom: 6px;">
-            Hospital Safety Culture Survey (HSCS)
-        </div>
-        <div style="font-size: 15px; color: #4a678f; line-height: 1.6;">
-            การประมวลผล HSCS จาก สรพ. ปี 2567–2568
-            หน้านี้ใช้ <b>preview card</b> แทนการฝังเว็บตรง เพื่อให้แสดงผลเสถียรกว่า
-        </div>
-    </div>
-    """
-    st.markdown(card_html, unsafe_allow_html=True)
-
-    if REPORT_PREVIEW_IMAGE.exists():
-        st.image(str(REPORT_PREVIEW_IMAGE), use_container_width=True)
-    else:
-        st.info("ไม่พบภาพ preview ในแพ็กเกจ แต่ยังเปิดรายงานฉบับเต็มได้ตามปกติ")
-
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.link_button("🔗 เปิดการประมวลผล HSCS จากสรพ.", REPORT_URL, use_container_width=True)
-    with c2:
-        st.caption("ถ้าต้องการดูรายละเอียดทั้งหมด แนะนำให้เปิดในแท็บใหม่เพื่อการใช้งานที่ครบถ้วนที่สุด")
-
-
-# =========================================================
 # App shell
 # =========================================================
 st.sidebar.title("MFU-MCH-HSCS")
@@ -1149,23 +1319,32 @@ if st.sidebar.button("Clear cache / reload data"):
 
 if not heatmap_source.exists():
     st.error(
-        f"ไม่พบไฟล์ข้อมูล {selected_config['label']}: `{heatmap_source.name}`\n\n"
+        f"ไม่พบไฟล์ข้อมูล {selected_config['label']}: "
+        f"`{heatmap_source.name}`\n\n"
         "กรุณาวางไฟล์ไว้ในโฟลเดอร์เดียวกับ `app.py` แล้ว deploy ใหม่"
     )
     st.stop()
 
 heatmap_pages = ["Color-coded Matrix: ภาพรวมทุกกลุ่ม"]
 try:
-    _, group_names = load_heatmap_excel(heatmap_source, sheet_name=heatmap_sheet)
+    _, group_names = load_heatmap_excel(
+        heatmap_source,
+        sheet_name=heatmap_sheet,
+    )
     group_names = [
-        g for g in group_names
-        if str(g).strip() not in ["", "ภาพรวม", "undefined", "None", "nan"]
+        group_name
+        for group_name in group_names
+        if str(group_name).strip()
+        not in ["", "ภาพรวม", "undefined", "None", "nan"]
     ]
-    heatmap_pages += [f"Color-coded Matrix: {g}" for g in group_names]
+    heatmap_pages += [
+        f"Color-coded Matrix: {group_name}"
+        for group_name in group_names
+    ]
 except Exception as exc:
     st.sidebar.warning(f"โหลดรายชื่อกลุ่มงานไม่ได้: {exc}")
 
-page_options = ["Dashboard ภาพรวม"] + heatmap_pages + ["การประมวลผล HSCS จากสรพ."]
+page_options = ["Dashboard ภาพรวม"] + heatmap_pages
 
 page = st.sidebar.radio(
     "เลือกหน้าที่ต้องการดู",
@@ -1187,8 +1366,15 @@ st.sidebar.markdown(
 )
 
 if page == "Dashboard ภาพรวม":
-    render_overview_dashboard_page(heatmap_source, heatmap_sheet, selected_config["label"])
-elif page == "การประมวลผล HSCS จากสรพ.":
-    render_full_report_page()
+    render_overview_dashboard_page(
+        heatmap_source,
+        heatmap_sheet,
+        selected_config["label"],
+    )
 else:
-    render_heatmap_page(heatmap_source, heatmap_sheet, page, selected_year)
+    render_heatmap_page(
+        heatmap_source,
+        heatmap_sheet,
+        page,
+        selected_year,
+    )
