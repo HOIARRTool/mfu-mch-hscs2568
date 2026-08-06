@@ -580,6 +580,432 @@ def _render_dashboard_css():
     )
 
 
+# =========================================================
+# Open-ended comments (H1 / H2)
+# =========================================================
+COMMENT_QUESTION_LABELS = {
+    "H1": "คุณภาพและความปลอดภัย",
+    "H2": "การรายงานอุบัติการณ์",
+}
+
+COMMENT_PLACEHOLDERS = {
+    "",
+    "-",
+    "--",
+    "—",
+    "ไม่มี",
+    "ไม่มีค่ะ",
+    "ไม่มีครับ",
+    "ไม่มีความคิดเห็น",
+    "ไม่มีข้อเสนอแนะ",
+    "ไม่ทราบ",
+    "ไม่ทราบค่ะ",
+    "ไม่ทราบครับ",
+    "na",
+    "n/a",
+    "nil",
+    "none",
+}
+
+
+def _clean_comment_text(value) -> str:
+    """Clean an open-ended response while preserving intentional line breaks."""
+    if pd.isna(value):
+        return ""
+
+    text = str(value).replace("\xa0", " ")
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+def _is_placeholder_comment(text: str) -> bool:
+    """Identify responses such as '-', 'ไม่มี', or 'ไม่ทราบ'."""
+    normalized = re.sub(r"\s+", " ", str(text or "")).strip().lower()
+    normalized_without_punctuation = normalized.strip(" .,-–—_/\\")
+    return (
+        normalized in COMMENT_PLACEHOLDERS
+        or normalized_without_punctuation in COMMENT_PLACEHOLDERS
+    )
+
+
+def _find_first_column(columns, candidates: list[str]) -> str:
+    """Return the first matching column name, allowing surrounding whitespace."""
+    normalized_map = {
+        str(column).replace("\xa0", " ").strip(): column
+        for column in columns
+    }
+    for candidate in candidates:
+        if candidate in normalized_map:
+            return normalized_map[candidate]
+    return ""
+
+
+@st.cache_data(show_spinner=False)
+def load_open_ended_comments(file_path: Path) -> pd.DataFrame:
+    """
+    Read H1/H2 from the Raw_Data sheet of the selected interac workbook.
+
+    Personnel identifiers are intentionally excluded from the returned data.
+    """
+    try:
+        raw = pd.read_excel(
+            file_path,
+            sheet_name="Raw_Data",
+            dtype=object,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"ไม่สามารถอ่านชีต Raw_Data ได้: {exc}"
+        ) from exc
+
+    raw.columns = [
+        str(column).replace("\xa0", " ").strip()
+        for column in raw.columns
+    ]
+
+    missing_questions = [
+        code for code in COMMENT_QUESTION_LABELS
+        if code not in raw.columns
+    ]
+    if missing_questions:
+        raise ValueError(
+            "ไม่พบคอลัมน์คำถามปลายเปิด: "
+            + ", ".join(missing_questions)
+        )
+
+    include_col = _find_first_column(
+        raw.columns,
+        [
+            "Include_In_Analysis",
+            "Include in Analysis",
+            "ใช้วิเคราะห์",
+            "นำมาวิเคราะห์",
+        ],
+    )
+    if include_col:
+        include_values = (
+            raw[include_col]
+            .astype(str)
+            .str.replace("\xa0", " ", regex=False)
+            .str.strip()
+            .str.lower()
+        )
+        accepted = {
+            "yes",
+            "y",
+            "true",
+            "1",
+            "ใช่",
+            "ใช้",
+            "include",
+        }
+        raw = raw[include_values.isin(accepted)].copy()
+
+    unit_col = _find_first_column(
+        raw.columns,
+        ["งาน", "หน่วยงาน", "พื้นที่ปฏิบัติงาน", "unit"],
+    )
+    group_col = _find_first_column(
+        raw.columns,
+        ["กลุ่มตามสรพ.", "กลุ่มตาม สรพ.", "group"],
+    )
+    division_col = _find_first_column(
+        raw.columns,
+        ["กลุ่มงาน", "ฝ่าย", "ฝ่าย/งาน", "division", "department"],
+    )
+
+    def cleaned_metadata(column_name: str, fallback: str) -> pd.Series:
+        if not column_name:
+            return pd.Series(
+                [fallback] * len(raw),
+                index=raw.index,
+                dtype=object,
+            )
+        return (
+            raw[column_name]
+            .map(_clean_comment_text)
+            .replace("", fallback)
+        )
+
+    base = pd.DataFrame(
+        {
+            "response_order": range(1, len(raw) + 1),
+            "unit": cleaned_metadata(
+                unit_col,
+                "ไม่ระบุหน่วยงาน",
+            ).tolist(),
+            "group": cleaned_metadata(
+                group_col,
+                "ไม่ระบุกลุ่มตาม สรพ.",
+            ).tolist(),
+            "division": cleaned_metadata(
+                division_col,
+                "ไม่ระบุกลุ่มงาน",
+            ).tolist(),
+        }
+    )
+
+    comment_frames = []
+    for question_code, question_label in COMMENT_QUESTION_LABELS.items():
+        part = base.copy()
+        part["question_code"] = question_code
+        part["question_label"] = question_label
+        part["comment"] = raw[question_code].map(
+            _clean_comment_text
+        ).tolist()
+        part = part[part["comment"].ne("")].copy()
+        part["is_placeholder"] = part["comment"].map(
+            _is_placeholder_comment
+        )
+        comment_frames.append(part)
+
+    if not comment_frames:
+        return pd.DataFrame(
+            columns=[
+                "response_order",
+                "unit",
+                "group",
+                "division",
+                "question_code",
+                "question_label",
+                "comment",
+                "is_placeholder",
+            ]
+        )
+
+    return pd.concat(comment_frames, ignore_index=True)
+
+
+def render_open_ended_comments_section(
+    file_path: Path,
+    year_label: str,
+    selected_unit: str = None,
+):
+    """Render H1/H2 comments for the organization or selected unit."""
+    st.markdown(
+        '<div class="hscs-section-title">'
+        'เสียงสะท้อนจากผู้ตอบ (คำถามปลายเปิด)</div>',
+        unsafe_allow_html=True,
+    )
+
+    scope_label = selected_unit or "ภาพรวมทั้งองค์กร"
+    st.markdown(
+        '<div class="hscs-trend-note">'
+        f'H1: คุณภาพและความปลอดภัย | '
+        f'H2: การรายงานอุบัติการณ์ | '
+        f'{html.escape(year_label)} | '
+        f'{html.escape(scope_label)}'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    try:
+        comments = load_open_ended_comments(file_path)
+    except Exception as exc:
+        st.warning(f"ไม่สามารถแสดงคำถามปลายเปิดได้: {exc}")
+        return
+
+    if selected_unit:
+        selected_clean = (
+            str(selected_unit)
+            .replace("\n", " ")
+            .replace("\xa0", " ")
+            .strip()
+        )
+        comments = comments[
+            comments["unit"]
+            .astype(str)
+            .str.replace("\n", " ", regex=False)
+            .str.replace("\xa0", " ", regex=False)
+            .str.strip()
+            .eq(selected_clean)
+        ].copy()
+
+    if comments.empty:
+        st.info("ไม่พบคำตอบ H1 หรือ H2 สำหรับมุมมองที่เลือก")
+        return
+
+    meaningful = comments[~comments["is_placeholder"]].copy()
+    h1_count = int(
+        meaningful["question_code"].eq("H1").sum()
+    )
+    h2_count = int(
+        meaningful["question_code"].eq("H2").sum()
+    )
+    unit_count = int(meaningful["unit"].nunique())
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric(
+        "H1 คุณภาพและความปลอดภัย",
+        f"{h1_count:,} ความคิดเห็น",
+    )
+    c2.metric(
+        "H2 การรายงานอุบัติการณ์",
+        f"{h2_count:,} ความคิดเห็น",
+    )
+    c3.metric(
+        "หน่วยงานที่มีความคิดเห็น",
+        f"{unit_count:,}",
+    )
+
+    safe_scope = re.sub(
+        r"[^0-9A-Za-zก-๙]+",
+        "_",
+        selected_unit or "organization",
+    ).strip("_")
+    safe_year = re.sub(
+        r"[^0-9A-Za-zก-๙]+",
+        "_",
+        year_label,
+    ).strip("_")
+
+    include_placeholders = st.checkbox(
+        "รวมคำตอบสั้นที่ไม่มีเนื้อหา เช่น “ไม่มี”, “-”, “ไม่ทราบ”",
+        value=False,
+        key=f"comments_placeholders_{safe_year}_{safe_scope}",
+    )
+
+    display_comments = (
+        comments.copy()
+        if include_placeholders
+        else meaningful.copy()
+    )
+
+    st.caption(
+        "ไม่แสดงรหัสบุคลากร และเรียงตามลำดับคำตอบในข้อมูลต้นฉบับ"
+    )
+
+    tabs = st.tabs(
+        [
+            "H1 คุณภาพและความปลอดภัย",
+            "H2 การรายงานอุบัติการณ์",
+        ]
+    )
+
+    for tab, question_code in zip(tabs, ["H1", "H2"]):
+        with tab:
+            question_data = display_comments[
+                display_comments["question_code"].eq(question_code)
+            ].copy()
+
+            keyword = st.text_input(
+                "ค้นหาคำในความคิดเห็นหรือชื่อหน่วยงาน",
+                value="",
+                key=(
+                    f"comments_search_{question_code}_"
+                    f"{safe_year}_{safe_scope}"
+                ),
+                placeholder="เช่น การสื่อสาร, ยา, หกล้ม, HOIR",
+            ).strip()
+
+            if keyword:
+                search_mask = (
+                    question_data["comment"]
+                    .astype(str)
+                    .str.contains(
+                        keyword,
+                        case=False,
+                        regex=False,
+                        na=False,
+                    )
+                    | question_data["unit"]
+                    .astype(str)
+                    .str.contains(
+                        keyword,
+                        case=False,
+                        regex=False,
+                        na=False,
+                    )
+                    | question_data["group"]
+                    .astype(str)
+                    .str.contains(
+                        keyword,
+                        case=False,
+                        regex=False,
+                        na=False,
+                    )
+                    | question_data["division"]
+                    .astype(str)
+                    .str.contains(
+                        keyword,
+                        case=False,
+                        regex=False,
+                        na=False,
+                    )
+                )
+                question_data = question_data[search_mask].copy()
+
+            question_data = question_data.sort_values(
+                ["response_order", "unit"],
+                kind="stable",
+            )
+
+            st.caption(
+                f"แสดง {len(question_data):,} ความคิดเห็น"
+            )
+
+            if question_data.empty:
+                st.info("ไม่พบความคิดเห็นตามเงื่อนไขที่เลือก")
+                continue
+
+            show_df = question_data[
+                ["unit", "group", "division", "comment"]
+            ].rename(
+                columns={
+                    "unit": "หน่วยงาน",
+                    "group": "กลุ่มตาม สรพ.",
+                    "division": "กลุ่มงาน",
+                    "comment": "ความคิดเห็น",
+                }
+            )
+
+            st.dataframe(
+                show_df,
+                use_container_width=True,
+                hide_index=True,
+                height=480,
+                column_config={
+                    "หน่วยงาน": st.column_config.TextColumn(
+                        "หน่วยงาน",
+                        width="medium",
+                    ),
+                    "กลุ่มตาม สรพ.": st.column_config.TextColumn(
+                        "กลุ่มตาม สรพ.",
+                        width="medium",
+                    ),
+                    "กลุ่มงาน": st.column_config.TextColumn(
+                        "กลุ่มงาน",
+                        width="medium",
+                    ),
+                    "ความคิดเห็น": st.column_config.TextColumn(
+                        "ความคิดเห็น",
+                        width="large",
+                    ),
+                },
+            )
+
+            csv_bytes = show_df.to_csv(
+                index=False,
+            ).encode("utf-8-sig")
+            st.download_button(
+                "ดาวน์โหลดความคิดเห็นเป็น CSV",
+                data=csv_bytes,
+                file_name=(
+                    f"HSCS_{safe_year}_{question_code}_"
+                    f"{safe_scope}.csv"
+                ),
+                mime="text/csv",
+                key=(
+                    f"comments_download_{question_code}_"
+                    f"{safe_year}_{safe_scope}"
+                ),
+            )
+
+
+
+
 def _dimension_key(dim_name: str) -> str:
     """Stable key for comparing dimensions across years; use the leading number when present."""
     m = re.match(r"^\s*(\d+)", str(dim_name or ""))
@@ -982,6 +1408,12 @@ def render_overview_dashboard_page(
         ],
         use_container_width=True,
         hide_index=True,
+    )
+
+    render_open_ended_comments_section(
+        heatmap_source,
+        year_label,
+        selected_unit,
     )
 
 
