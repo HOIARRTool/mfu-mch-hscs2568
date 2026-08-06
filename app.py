@@ -574,10 +574,158 @@ def _render_dashboard_css():
             font-size: 0.88rem;
             margin: -4px 0 14px 0;
         }
+
+        .hscs-metric-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 12px;
+            margin: 12px 0 22px 0;
+        }
+        .hscs-metric-card {
+            min-height: 126px;
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            border-radius: 18px;
+            padding: 16px 16px 14px 16px;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.055);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .hscs-metric-label {
+            color: #334155;
+            font-size: 1.02rem;
+            line-height: 1.28;
+            font-weight: 800;
+        }
+        .hscs-metric-value {
+            color: #0F172A;
+            font-size: 1.88rem;
+            line-height: 1.08;
+            font-weight: 800;
+            margin-top: 10px;
+        }
+        .hscs-metric-note {
+            color: #475569;
+            font-size: 1.02rem;
+            line-height: 1.25;
+            font-weight: 750;
+            margin-top: 7px;
+        }
+        .hscs-metric-note.good { color: #166534; }
+        .hscs-metric-note.warn { color: #9A3412; }
+        .hscs-metric-note.urgent { color: #B91C1C; }
+
+        .hscs-metric-pastel-blue { background: #EAF4FF; }
+        .hscs-metric-pastel-mint { background: #EAF9F1; }
+        .hscs-metric-pastel-lilac { background: #F3EEFF; }
+        .hscs-metric-pastel-yellow { background: #FFF8D9; }
+        .hscs-metric-pastel-rose { background: #FFECEF; }
+
+        @media (max-width: 1350px) {
+            .hscs-metric-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+        @media (max-width: 820px) {
+            .hscs-metric-grid {
+                grid-template-columns: repeat(1, minmax(0, 1fr));
+            }
+            .hscs-metric-card { min-height: 110px; }
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+# =========================================================
+# Respondent counts
+# =========================================================
+@st.cache_data(show_spinner=False)
+def load_respondent_counts(file_path: Path) -> tuple[int, dict[str, int]]:
+    """
+    Count included survey respondents overall and by the exact raw-data unit name.
+
+    The count comes from the Raw_Data sheet and respects Include_In_Analysis
+    when that field is available.
+    """
+    try:
+        raw = pd.read_excel(
+            file_path,
+            sheet_name="Raw_Data",
+            dtype=object,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"ไม่สามารถอ่านจำนวนผู้ตอบจากชีต Raw_Data ได้: {exc}"
+        ) from exc
+
+    raw.columns = [
+        str(column).replace("\xa0", " ").strip()
+        for column in raw.columns
+    ]
+
+    include_candidates = [
+        "Include_In_Analysis",
+        "Include in Analysis",
+        "ใช้วิเคราะห์",
+        "นำมาวิเคราะห์",
+    ]
+    include_col = next(
+        (column for column in include_candidates if column in raw.columns),
+        "",
+    )
+
+    if include_col:
+        include_values = (
+            raw[include_col]
+            .astype(str)
+            .str.replace("\xa0", " ", regex=False)
+            .str.strip()
+            .str.lower()
+        )
+        accepted = {
+            "yes",
+            "y",
+            "true",
+            "1",
+            "ใช่",
+            "ใช้",
+            "include",
+        }
+        raw = raw[include_values.isin(accepted)].copy()
+
+    unit_candidates = [
+        "งาน",
+        "หน่วยงาน",
+        "พื้นที่ปฏิบัติงาน",
+        "unit",
+    ]
+    unit_col = next(
+        (column for column in unit_candidates if column in raw.columns),
+        "",
+    )
+
+    overall_count = int(len(raw))
+    if not unit_col:
+        return overall_count, {}
+
+    unit_series = (
+        raw[unit_col]
+        .fillna("")
+        .astype(str)
+        .str.replace("\n", " ", regex=False)
+        .str.replace("\xa0", " ", regex=False)
+        .str.strip()
+    )
+
+    unit_counts = (
+        unit_series[unit_series.ne("")]
+        .value_counts(dropna=False)
+        .astype(int)
+        .to_dict()
+    )
+    return overall_count, unit_counts
 
 
 # =========================================================
@@ -1232,8 +1380,8 @@ def render_overview_dashboard_page(
     st.markdown(
         f'<div class="hscs-hero"><div class="hscs-hero-text">'
         f'<h1>MFU-MCH HSCS Dashboard</h1>'
-        f'<p>Hospital Safety Culture Survey:'
-        f' | {html.escape(year_label)}</p></div>'
+        f'<p><h2> '
+        f'| {html.escape(year_label)}</h2></p></div>'
         f'<div class="hscs-hero-logos">'
         f'<img class="hscs-hero-logo" src="{MFU_LOGO_URL}" '
         f'alt="Mae Fah Luang University logo">'
@@ -1278,19 +1426,61 @@ def render_overview_dashboard_page(
         df[["sub_code", "sub_name"]].drop_duplicates().shape[0]
     )
 
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric(
-        "Overall Positive Score",
-        f"{overall_score:.1f}%",
-        overall_status,
-    )
-    m2.metric("จำนวนมิติหลัก", f"{dim_count:,}")
-    m3.metric("จำนวนมิติย่อย", f"{sub_count:,}")
-    m4.metric(
-        "ข้อควรพัฒนาด่วน",
-        f"{urgent_count:,}",
-        f"เร่งพัฒนา {orange_count:,} ข้อ",
-    )
+    try:
+        overall_respondents, unit_respondents = load_respondent_counts(
+            heatmap_source
+        )
+        respondent_count = (
+            unit_respondents.get(selected_unit, 0)
+            if selected_unit
+            else overall_respondents
+        )
+        respondent_display = f"{respondent_count:,}"
+    except Exception as exc:
+        respondent_display = "—"
+        st.caption(f"หมายเหตุ: ไม่สามารถอ่านจำนวนผู้ตอบได้ ({exc})")
+
+    if overall_score > 80:
+        status_class = "good"
+    elif overall_score < 60:
+        status_class = "urgent"
+    else:
+        status_class = "warn"
+
+    metric_cards_html = f'''
+    <div class="hscs-metric-grid">
+        <div class="hscs-metric-card hscs-metric-pastel-blue">
+            <div class="hscs-metric-label">Overall Positive Score</div>
+            <div class="hscs-metric-value">{overall_score:.1f}%</div>
+            <div class="hscs-metric-note {status_class}">
+                {html.escape(overall_status)}
+            </div>
+        </div>
+        <div class="hscs-metric-card hscs-metric-pastel-mint">
+            <div class="hscs-metric-label">จำนวนผู้ตอบแบบสอบถาม</div>
+            <div class="hscs-metric-value">{respondent_display}</div>
+            <div class="hscs-metric-note">คน</div>
+        </div>
+        <div class="hscs-metric-card hscs-metric-pastel-lilac">
+            <div class="hscs-metric-label">จำนวนมิติหลัก</div>
+            <div class="hscs-metric-value">{dim_count:,}</div>
+            <div class="hscs-metric-note">มิติ</div>
+        </div>
+        <div class="hscs-metric-card hscs-metric-pastel-yellow">
+            <div class="hscs-metric-label">จำนวนมิติย่อย</div>
+            <div class="hscs-metric-value">{sub_count:,}</div>
+            <div class="hscs-metric-note">ข้อ</div>
+        </div>
+        <div class="hscs-metric-card hscs-metric-pastel-rose">
+            <div class="hscs-metric-label">ข้อควรพัฒนาด่วน</div>
+            <div class="hscs-metric-value">{urgent_count:,}</div>
+            <div class="hscs-metric-note urgent">
+                เร่งพัฒนา {orange_count:,} ข้อ
+            </div>
+        </div>
+    </div>
+    '''
+    st.markdown(metric_cards_html, unsafe_allow_html=True)
 
     st.markdown(
         '<div class="hscs-section-title">'
