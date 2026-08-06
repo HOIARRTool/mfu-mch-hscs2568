@@ -1232,8 +1232,8 @@ def render_overview_dashboard_page(
     st.markdown(
         f'<div class="hscs-hero"><div class="hscs-hero-text">'
         f'<h1>MFU-MCH HSCS Dashboard</h1>'
-        f'<p>Hospital Safety Culture Survey: executive overview + '
-        f'drill-down Color-coded Matrix | {html.escape(year_label)}</p></div>'
+        f'<p>Hospital Safety Culture Survey:'
+        f' | {html.escape(year_label)}</p></div>'
         f'<div class="hscs-hero-logos">'
         f'<img class="hscs-hero-logo" src="{MFU_LOGO_URL}" '
         f'alt="Mae Fah Luang University logo">'
