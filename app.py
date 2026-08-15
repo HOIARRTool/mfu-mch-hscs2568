@@ -42,6 +42,7 @@ HSCS_YEAR_CONFIG = {
     },
 }
 
+MFU_LOGO_URL = "https://mfu.ac.th/fileadmin/_processed_/6/7/csm_logo_mfu_3d_colour_15e5a7a50f.png?raw=true"
 HAI_LOGO_URL = "https://github.com/HOIARRTool/appqtbi/blob/main/messageImage_1763018963411.jpg?raw=true"
 
 
@@ -1378,9 +1379,14 @@ def render_overview_dashboard_page(
 
     st.markdown(
         f'<div class="hscs-hero"><div class="hscs-hero-text">'
-        f'<h1>UPH HSCS Dashboard</h1>'
+        f'<h1>MFU-MCH HSCS Dashboard</h1>'
         f'<p><h2> '
-        f'| {html.escape(year_label)}</h2></p></div>',
+        f'| {html.escape(year_label)}</h2></p></div>'
+        f'<div class="hscs-hero-logos">'
+        f'<img class="hscs-hero-logo" src="{MFU_LOGO_URL}" '
+        f'alt="Mae Fah Luang University logo">'
+        f'<img class="hscs-hero-logo" src="{HAI_LOGO_URL}" '
+        f'alt="Healthcare Accreditation Institute logo"></div></div>',
         unsafe_allow_html=True,
     )
 
@@ -1916,7 +1922,7 @@ def render_heatmap_page(heatmap_source: Path, heatmap_sheet: str, selected_page:
 # =========================================================
 # App shell
 # =========================================================
-st.sidebar.title("UPH-HSCS")
+st.sidebar.title("MFU-MCH-HSCS")
 
 selected_year = st.sidebar.selectbox(
     "เลือกปีข้อมูล HSCS",
